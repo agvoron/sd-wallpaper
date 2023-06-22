@@ -2,6 +2,7 @@ import base64
 import glob
 import io
 import os
+import random
 import requests
 import subprocess
 import time
@@ -16,16 +17,22 @@ ARCHIVE_PATH = "output/"
 DEPLOY_PATH = "backgrounds/"
 LOG_PATH = "logs/"
 
-TXT2IMG_PROMPT = "(4k absurdres best quality landscape photo), (night), mystical ominous eerie gloomy dark fantasy (forest), draped with vines"
-SD_UPSCALE_PROMPT = "cropped 4k absurdres best quality landscape, forest"
-NEG_PROMPT = "easynegative (worst quality:1.5), (low quality:1.5), lowres, pixelated, blurred, cropped, jpeg artifacts, text, artist name, signature, logo, watermark"
+TXT2IMG_PROMPT = "4k absurdres best quality fantasy paradise landscape, exotic jungle rainforest, ferns, acacia, lily, rafflesia, [ancient ruins]"
+SD_UPSCALE_PROMPT = "4k 100mm absurdres best quality photo, extremely detailed foliage, leaves"
+NEG_PROMPT = "(road, path, trail, person), easynegative, bad-artist-neg, (worst quality:1.5), (low quality:1.5), lowres, pixelated, blurred, cropped, jpeg artifacts, text, artist name, signature, logo, watermark"
 SAMPLER = "DPM++ 2M Karras"
 
 NUM_IMGS_TO_GENERATE = 6
 
 MODELS = [
     ["aZovyaRPGArtistTools_v2.safetensors [da5224a242]", "vae-ft-ema-560000-ema-pruned.safetensors"],
-    ["AOM3.safetensors [eb4099ba9c]", "kl-f8-anime2.ckpt"]
+    ["dreamshaper_4BakedVaeFp16.safetensors [db2c51c333]", "vae-ft-ema-560000-ema-pruned.safetensors"],
+    ["landscapes-cheeseDaddys_41.safetensors [7ed3c68f22]", "vae-ft-ema-560000-ema-pruned.safetensors"],
+    ["fantasticmixReal_v30.safetensors [f2492d7e6b]", "vae-ft-ema-560000-ema-pruned.safetensors"],
+    # ["AOM3.safetensors [eb4099ba9c]", "kl-f8-anime2.ckpt"],
+    # ["anypastelAnythingV45_anypastelAnythingV45.safetensors [99d004eeec]", "kl-f8-anime2.ckpt"],
+    # ["CounterfeitV25_25.safetensors [a074b8864e]", "kl-f8-anime2.ckpt"],
+    # ["cetusMix_Version35.safetensors [a611cf9c19]", "kl-f8-anime2.ckpt"]
 ]
 
 
@@ -104,14 +111,14 @@ def save_image_with_png_info(img_json, save_paths):
 def main():
     print(f"Starting main {APP_NAME} script.")
     # TODO add some logging output
-    # TODO set the checkpoint and VAE from a random list of choices
     # TODO generate a random prompt based on some factors
     # ideas: today's weather, news headlines, random keywords, text from language model
 
-    # set payloads with options for each request
+    # set payloads with options for each request; use a random model
+    random_model = random.choice(MODELS)
     options_payload = {
-        "sd_model_checkpoint": MODELS[1][0],
-        "sd_vae": MODELS[1][1]
+        "sd_model_checkpoint": random_model[0],
+        "sd_vae": random_model[1]
     }
 
     txt2img_payload = {
@@ -167,7 +174,7 @@ def main():
         ]
     }
 
-    print("Configuring SD options.")
+    print(f"Configuring SD options: {random_model[0]}")
     retry_post_request(url=f"{SD_URL}/sdapi/v1/options", json=options_payload)
 
     imgs_for_upscale = []
@@ -196,8 +203,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # TODO schedule to run on boot
-
     print("Launching Stable Diffusion server...")
     launch_server_bat = f"{os.path.abspath(os.path.dirname(__file__))}\\launch-server.bat"
     # creationflags is a bit field. Use | (bitwise or) to set multiple flags if needed

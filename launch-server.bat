@@ -1,6 +1,6 @@
 @ECHO OFF
 
-REM Hardcoded SD webui install location - DirectML fork
+REM Hardcoded SD webui install location - DirectML fork for AMD
 CD %USERPROFILE%\Desktop\StableDiffusionIshqqyFork\stable-diffusion-webui-directml
 
 SET PYTHON=
