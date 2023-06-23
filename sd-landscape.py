@@ -95,6 +95,7 @@ def theme_txt2img_prompt(txt2img_prompt):
 
     # TODO could randomly choose a scenery string from a preset list
     # TODO could add other features to the prompt
+    # ideas: news headlines, random keywords, text from language model
 
     # Edit the prompt string
     append_string = f" {weather_string}, {daytime_string}"
@@ -116,7 +117,7 @@ def retry_post_request(url, json):
     retries = 3
     while retries > 0:
         try:
-            response = requests.post(url=url, json=json) # timeout=60 probably needs to be much much more; TODO test some timings
+            response = requests.post(url=url, json=json) # timeout=60 probably needs to be much much more; TODO test some timings, but doesn't seem to be a problem anyway
             response.raise_for_status()
             break
         except ConnectionError as e:
@@ -135,7 +136,7 @@ def retry_post_request(url, json):
             time.sleep(5)
         # except Timeout as e:
         #     print(f"Request timed out. The server is probably hanging. {APP_NAME} aborting...")
-        #     # TODO when the server hangs, can't just retry.
+        #     # TODO when the server hangs, can't just retry; but this doesn't seem to happen anyway
         #     # Try sending an Interrupt request? Or a signal to the subprocess? Or just restart?
         #     raise
 
@@ -185,8 +186,6 @@ def main():
         configure({})
 
     # TODO add some logging output
-    # TODO generate a random prompt based on some factors
-    # ideas: today's weather, news headlines, random keywords, text from language model
 
     # set payloads with options for each request; use a random model
     random_model = random.choice(config_models)
