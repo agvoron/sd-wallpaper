@@ -6,35 +6,102 @@ import random
 import requests
 import subprocess
 import time
+import tomllib
 
 from datetime import datetime as dt
 from PIL import Image, PngImagePlugin
-from requests import ConnectionError, Timeout, HTTPError
+from requests import ConnectionError, Timeout, HTTPError, RequestException
 
 APP_NAME = "sd-landscape"
-SD_URL = "http://127.0.0.1:7860"
-ARCHIVE_PATH = "output/"
-DEPLOY_PATH = "backgrounds/"
-LOG_PATH = "logs/"
 
-TXT2IMG_PROMPT = "4k absurdres best quality fantasy paradise landscape, exotic jungle rainforest, ferns, acacia, lily, rafflesia, [ancient ruins]"
-SD_UPSCALE_PROMPT = "4k 100mm absurdres best quality photo, extremely detailed foliage, leaves"
-NEG_PROMPT = "(road, path, trail, person), easynegative, bad-artist-neg, (worst quality:1.5), (low quality:1.5), lowres, pixelated, blurred, cropped, jpeg artifacts, text, artist name, signature, logo, watermark"
-SAMPLER = "DPM++ 2M Karras"
+# global defaults
+DEFAULT_SD_URL = "http://127.0.0.1:7860"
+DEFAULT_ARCHIVE_PATH = "output/"
+DEFAULT_DEPLOY_PATH = "backgrounds/"
+DEFAULT_LOG_PATH = "logs/"
 
-NUM_IMGS_TO_GENERATE = 6
+DEFAULT_TXT2IMG_PROMPT = "4k absurdres best quality fantasy paradise landscape, exotic jungle rainforest"
+DEFAULT_SD_UPSCALE_PROMPT = "4k 100mm absurdres best quality photo, extremely detailed foliage, leaves"
+DEFAULT_NEG_PROMPT = "easynegative, bad-artist-neg, (worst quality:1.5), (low quality:1.5), lowres, pixelated, blurred, cropped, jpeg artifacts, text, artist name, signature, logo, watermark"
+DEFAULT_SAMPLER = "DPM++ 2M Karras"
 
-MODELS = [
+DEFAULT_NUM_IMGS_TO_GENERATE = 2
+
+DEFAULT_MODELS = [
     ["aZovyaRPGArtistTools_v2.safetensors [da5224a242]", "vae-ft-ema-560000-ema-pruned.safetensors"],
     ["dreamshaper_4BakedVaeFp16.safetensors [db2c51c333]", "vae-ft-ema-560000-ema-pruned.safetensors"],
-    ["landscapes-cheeseDaddys_41.safetensors [7ed3c68f22]", "vae-ft-ema-560000-ema-pruned.safetensors"],
-    ["fantasticmixReal_v30.safetensors [f2492d7e6b]", "vae-ft-ema-560000-ema-pruned.safetensors"],
-    # ["AOM3.safetensors [eb4099ba9c]", "kl-f8-anime2.ckpt"],
-    # ["anypastelAnythingV45_anypastelAnythingV45.safetensors [99d004eeec]", "kl-f8-anime2.ckpt"],
-    # ["CounterfeitV25_25.safetensors [a074b8864e]", "kl-f8-anime2.ckpt"],
-    # ["cetusMix_Version35.safetensors [a611cf9c19]", "kl-f8-anime2.ckpt"]
+    ["landscapes-cheeseDaddys_41.safetensors [7ed3c68f22]", "vae-ft-ema-560000-ema-pruned.safetensors"]
 ]
 
+def configure(config):
+    """
+    Configure global variables from dict.
+    """
+    print("Configuring...")
+    global config_sd_url
+    global config_archive_path
+    global config_deploy_path
+    global config_log_path
+
+    global config_txt2img_prompt
+    global config_sd_upscale_prompt
+    global config_neg_prompt
+    global config_sampler
+
+    global config_num_imgs_to_generate
+
+    global config_models
+
+    global weather_api_key
+    global weather_query
+
+    config_sd_url = config.get("sd_url", DEFAULT_SD_URL)
+    config_archive_path = config.get("archive_path", DEFAULT_ARCHIVE_PATH)
+    config_deploy_path = config.get("deploy_path", DEFAULT_DEPLOY_PATH)
+    config_log_path = config.get("log_path", DEFAULT_LOG_PATH)
+
+    config_txt2img_prompt = config.get("txt2img_prompt", DEFAULT_TXT2IMG_PROMPT)
+    config_sd_upscale_prompt = config.get("sd_upscale_prompt", DEFAULT_SD_UPSCALE_PROMPT)
+    config_neg_prompt = config.get("neg_prompt", DEFAULT_NEG_PROMPT)
+    config_sampler = config.get("sampler", DEFAULT_SAMPLER)
+
+    config_num_imgs_to_generate = config.get("num_imgs_to_generate", DEFAULT_NUM_IMGS_TO_GENERATE)
+
+    config_models = config.get("models", DEFAULT_MODELS)
+
+    weather_api_key = config.get("weather_api_key", None)
+    weather_query = config.get("weather_query", None)
+
+def theme_txt2img_prompt(txt2img_prompt):
+    # Request weather from API to provide a prompt theme
+    daytime_string = ""
+    weather_string = ""
+    try:
+        print("Querying weather...")
+        response = requests.get(f"https://api.weatherapi.com/v1/current.json?key={weather_api_key}&q={weather_query}")
+        response.raise_for_status()
+
+        weather_data = response.json()
+        is_day = int(weather_data["current"]["is_day"])
+        if is_day == 0:
+            daytime_string = "night"
+        weather_string = weather_data["current"]["condition"]["text"].lower()
+
+    # For any exception, couldn't get weather, just give up and use the default
+    except RequestException as err:
+        print(f"Failed to query weather data. Error: {err}")
+    except (KeyError, IndexError) as err:
+        print(f"Error parsing weather API response: {err}")
+
+    # TODO could randomly choose a scenery string from a preset list
+    # TODO could add other features to the prompt
+
+    # Edit the prompt string
+    append_string = f" {weather_string}, {daytime_string}"
+    print(f"Appending to prompt:{append_string}")
+    prompt = f"{txt2img_prompt}{append_string}"
+
+    return prompt
 
 def retry_post_request(url, json):
     """
@@ -72,7 +139,7 @@ def retry_post_request(url, json):
         #     # Try sending an Interrupt request? Or a signal to the subprocess? Or just restart?
         #     raise
 
-    with open(f"{LOG_PATH}last_response.log", "w") as f:
+    with open(f"{config_log_path}last_response.log", "w") as f:
         f.write(str(response))
     
     return response
@@ -95,7 +162,7 @@ def save_image_with_png_info(img_json, save_paths):
     image_payload = {
         "image": "data:image/png;base64," + img
     }
-    info_response = retry_post_request(url=f"{SD_URL}/sdapi/v1/png-info", json=image_payload)
+    info_response = retry_post_request(url=f"{config_sd_url}/sdapi/v1/png-info", json=image_payload)
 
     pnginfo = PngImagePlugin.PngInfo()
     pnginfo.add_text("parameters", info_response.json().get("info"))
@@ -110,22 +177,29 @@ def save_image_with_png_info(img_json, save_paths):
 
 def main():
     print(f"Starting main {APP_NAME} script.")
+
+    try:
+        with open("config.toml", "rb") as f:
+            configure(tomllib.load(f))
+    except:
+        configure({})
+
     # TODO add some logging output
     # TODO generate a random prompt based on some factors
     # ideas: today's weather, news headlines, random keywords, text from language model
 
     # set payloads with options for each request; use a random model
-    random_model = random.choice(MODELS)
+    random_model = random.choice(config_models)
     options_payload = {
         "sd_model_checkpoint": random_model[0],
         "sd_vae": random_model[1]
     }
 
     txt2img_payload = {
-        "prompt": TXT2IMG_PROMPT,
-        "negative_prompt": NEG_PROMPT,
+        "prompt": theme_txt2img_prompt(config_txt2img_prompt), # Edit the prompt string with some extra data based on today's context
+        "negative_prompt": config_neg_prompt,
         "seed": -1,
-        "sampler_name": SAMPLER,
+        "sampler_name": config_sampler,
         "batch_size": 1,
         "steps": 16,
         "cfg_scale": 9,
@@ -148,10 +222,10 @@ def main():
     }
 
     sd_upscale_payload = {
-        "prompt": SD_UPSCALE_PROMPT,
-        "negative_prompt": NEG_PROMPT,
+        "prompt": config_sd_upscale_prompt,
+        "negative_prompt": config_neg_prompt,
         "seed": -1,
-        "sampler_name": SAMPLER,
+        "sampler_name": config_sampler,
         "batch_size": 1,
         "steps": 22,
         "cfg_scale": 10,
@@ -175,20 +249,20 @@ def main():
     }
 
     print(f"Configuring SD options: {random_model[0]}")
-    retry_post_request(url=f"{SD_URL}/sdapi/v1/options", json=options_payload)
+    retry_post_request(url=f"{config_sd_url}/sdapi/v1/options", json=options_payload)
 
     imgs_for_upscale = []
-    for _ in range(NUM_IMGS_TO_GENERATE):
+    for _ in range(config_num_imgs_to_generate):
         print("Sending txt2img request.")
-        response = retry_post_request(url=f"{SD_URL}/sdapi/v1/txt2img", json=txt2img_payload)
+        response = retry_post_request(url=f"{config_sd_url}/sdapi/v1/txt2img", json=txt2img_payload)
         img_json = response.json()
-        save_image_with_png_info(img_json, [ARCHIVE_PATH])
+        save_image_with_png_info(img_json, [config_archive_path])
         img = img_json["images"][0]
         imgs_for_upscale.append("data:image/png;base64," + img)
 
     # delete from output path TODO only do this if new images are ready
-    print(f"Deleting the previous batch of images from {DEPLOY_PATH}.")
-    old_images = glob.glob(f"{DEPLOY_PATH}{APP_NAME}_*.png")
+    print(f"Deleting the previous batch of images from {config_deploy_path}.")
+    old_images = glob.glob(f"{config_deploy_path}{APP_NAME}_*.png")
     for old in old_images:
         os.remove(old)
 
@@ -197,9 +271,9 @@ def main():
         # put an image in the payload, again, one at a time
         sd_upscale_payload.update({"init_images": [img]}) 
 
-        sd_upscale_response = retry_post_request(url=f"{SD_URL}/sdapi/v1/img2img", json=sd_upscale_payload)
+        sd_upscale_response = retry_post_request(url=f"{config_sd_url}/sdapi/v1/img2img", json=sd_upscale_payload)
         sd_upscale_json = sd_upscale_response.json()
-        save_image_with_png_info(sd_upscale_json, [ARCHIVE_PATH, DEPLOY_PATH])
+        save_image_with_png_info(sd_upscale_json, [config_archive_path, config_deploy_path])
 
 
 if __name__ == "__main__":
