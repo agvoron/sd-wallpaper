@@ -33,6 +33,7 @@ DEFAULT_MODELS = [
     ["landscapes-cheeseDaddys_41.safetensors [7ed3c68f22]", "vae-ft-ema-560000-ema-pruned.safetensors"]
 ]
 
+
 def configure(config):
     """
     Configure global variables from dict.
@@ -72,10 +73,27 @@ def configure(config):
     weather_api_key = config.get("weather_api_key", None)
     weather_query = config.get("weather_query", None)
 
-def theme_txt2img_prompt(txt2img_prompt):
-    # Request weather from API to provide a prompt theme
-    daytime_string = ""
-    weather_string = ""
+
+def start_stable_diffusion():
+    print("Starting Stable Diffusion server...")
+    launch_server_bat = f"{os.path.abspath(os.path.dirname(__file__))}\\launch-server.bat"
+    # creationflags is a bit field. Use | (bitwise or) to set multiple flags if needed
+    # the subprocess.CREATE_NEW_PROCESS_GROUP flag normally allows for os.kill() to be used
+    # however, the flags are incompatible, so I can't kill the subproces from here
+    # so, can't restart the server programatically
+    subprocess.Popen(launch_server_bat, creationflags=subprocess.CREATE_NEW_CONSOLE) 
+    time.sleep(30) # wait for SD server to start up
+
+
+def generate_txt2img_prompt(txt2img_prompt):
+    """
+    Generate and append some extra text to the configured prompt.
+    For now, request weather from API to provide a prompt theme
+    TODO
+    """
+    # Set some defaults if API fails
+    daytime_string = random.choice(["day", "night"])
+    weather_string = "clear"
     try:
         print("Querying weather...")
         response = requests.get(f"https://api.weatherapi.com/v1/current.json?key={weather_api_key}&q={weather_query}")
@@ -85,6 +103,8 @@ def theme_txt2img_prompt(txt2img_prompt):
         is_day = int(weather_data["current"]["is_day"])
         if is_day == 0:
             daytime_string = "night"
+        else:
+            daytime_string = "day"
         weather_string = weather_data["current"]["condition"]["text"].lower()
 
     # For any exception, couldn't get weather, just give up and use the default
@@ -93,16 +113,17 @@ def theme_txt2img_prompt(txt2img_prompt):
     except (KeyError, IndexError) as err:
         print(f"Error parsing weather API response: {err}")
 
-    # TODO could randomly choose a scenery string from a preset list
-    # TODO could add other features to the prompt
+    # TODO randomly choose a scenery string from a configured preset list
+    # TODO add other features to the prompt
     # ideas: news headlines, random keywords, text from language model
 
     # Edit the prompt string
-    append_string = f" {weather_string}, {daytime_string}"
+    append_string = f" {weather_string} {daytime_string}" # e.g. "clear night"; "party cloudy day";
     print(f"Appending to prompt:{append_string}")
     prompt = f"{txt2img_prompt}{append_string}"
 
     return prompt
+
 
 def retry_post_request(url, json):
     """
@@ -114,34 +135,30 @@ def retry_post_request(url, json):
     """
     print(f"Sending POST request to: {url}")
     response = None
-    retries = 3
-    while retries > 0:
+    max_tries = 3 # Including the first one
+    tries = max_tries
+    while tries > 0:
+        tries -= 1
+        retry_delay = pow(5, (max_tries - tries))
         try:
-            response = requests.post(url=url, json=json) # timeout=60 probably needs to be much much more; TODO test some timings, but doesn't seem to be a problem anyway
+            response = requests.post(url=url, json=json, timeout=1200) # 20 minutes
             response.raise_for_status()
             break
         except ConnectionError as e:
-            retries -= 1
-            if retries <= 0:
-                print(f"ConnectionError raised, ran out of retries. {APP_NAME} aborting...")
+            if tries <= 0:
+                print(f"ConnectionError raised, ran out of retries.")
                 raise
-            print(f"ConnectionError raised when posting request. Retrying... ({retries} tries left)")
-            time.sleep(5)
+            print(f"ConnectionError raised when posting request. Sleeping for {retry_delay} seconds and retrying... ({tries} tries left)")
+            time.sleep(retry_delay)
         except HTTPError as e:
-            retries -= 1
-            if retries <= 0:
-                print(f"HTTPError raised, ran out of retries. {APP_NAME} aborting...")
+            if tries <= 0:
+                print(f"HTTPError raised, ran out of retries.")
                 raise
-            print(f"HTTPError raised when posting request. Retrying... ({retries} tries left)")
-            time.sleep(5)
-        # except Timeout as e:
-        #     print(f"Request timed out. The server is probably hanging. {APP_NAME} aborting...")
-        #     # TODO when the server hangs, can't just retry; but this doesn't seem to happen anyway
-        #     # Try sending an Interrupt request? Or a signal to the subprocess? Or just restart?
-        #     raise
-
-    with open(f"{config_log_path}last_response.log", "w") as f:
-        f.write(str(response))
+            print(f"HTTPError raised when posting request. Sleeping for {retry_delay} seconds and retrying... ({tries} tries left)")
+            time.sleep(retry_delay)
+        except Timeout as e:
+            print(f"Request timed out. The server is probably hanging.")
+            raise
     
     return response
 
@@ -178,6 +195,7 @@ def save_image_with_png_info(img_json, save_paths):
 
 def main():
     print(f"Starting main {APP_NAME} script.")
+    start_stable_diffusion()
 
     try:
         with open("config.toml", "rb") as f:
@@ -195,7 +213,7 @@ def main():
     }
 
     txt2img_payload = {
-        "prompt": theme_txt2img_prompt(config_txt2img_prompt), # Edit the prompt string with some extra data based on today's context
+        "prompt": generate_txt2img_prompt(config_txt2img_prompt), # Edit the prompt string with some extra data based on today's context
         "negative_prompt": config_neg_prompt,
         "seed": -1,
         "sampler_name": config_sampler,
@@ -273,15 +291,9 @@ def main():
         sd_upscale_response = retry_post_request(url=f"{config_sd_url}/sdapi/v1/img2img", json=sd_upscale_payload)
         sd_upscale_json = sd_upscale_response.json()
         save_image_with_png_info(sd_upscale_json, [config_archive_path, config_deploy_path])
+    
+    print(f"{APP_NAME} finished succesfully.")
 
 
 if __name__ == "__main__":
-    print("Launching Stable Diffusion server...")
-    launch_server_bat = f"{os.path.abspath(os.path.dirname(__file__))}\\launch-server.bat"
-    # creationflags is a bit field. Use | (bitwise or) to set multiple flags if needed
-    subprocess.Popen(launch_server_bat, creationflags=subprocess.CREATE_NEW_CONSOLE)
-    time.sleep(30) # wait for SD server to start up
-
     main()
-    # TODO close SD server subprocess
-    print(f"{APP_NAME} is done.")
